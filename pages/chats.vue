@@ -309,7 +309,7 @@ export default {
     mounted() {
         const self = this;
         // let socket = new WebSocket('wss://ourworld-signaling-server.herokuapp.com/');
-        let socket = new WebSocket('ws://localhost:9000');
+        let socket = new WebSocket('ws://192.168.111.25:9000');
         window.conn = socket;
         let callPeer, answerPeer, localStream, remoteStream;
         const room = document.querySelector('.stream-ground');
