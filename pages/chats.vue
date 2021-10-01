@@ -176,7 +176,7 @@
             <div class="request-content">
                 <div class="request">
                     <h3 class="request-title">Call request</h3>
-                    <p class="request-msg">{{ requestFrom.sender }} wants to have a video chat with you.</p>
+                    <p class="request-msg">{{ remoteUserName }} wants to have a video chat with you.</p>
                     <div class="request-btns">
                         <button class="cancel">reject</button>
                         <button class="accept">join</button>
@@ -217,9 +217,8 @@ export default {
             callTo: {},
             callWaiting: true,
             userId: this.$store.state.auth.user.uid,
-            remoteAnswer: null,
-            remoteCandidate: null,
-            requestFrom: {}
+            remoteOffer: null,
+            remoteUserName: ''
         }
     },
     methods: {
@@ -302,14 +301,10 @@ export default {
             emojis.classList.toggle('active');
         }
     },
-    beforeRouteLeave(to,from,next) {
-        window.conn.close()
-        next()
-    },
     mounted() {
         const self = this;
         // let socket = new WebSocket('wss://ourworld-signaling-server.herokuapp.com/');
-        let socket = new WebSocket('ws://192.168.111.25:9000');
+        let socket = new WebSocket('ws://localhost:9000');
         window.conn = socket;
         let callPeer, answerPeer, localStream, remoteStream;
         const room = document.querySelector('.stream-ground');
@@ -406,43 +401,60 @@ export default {
                 let notificatoin = `${msg.name} has ${msg.action} the chat!`;
                 console.log(notificatoin)
 
-            } else if (msg.type == 'offer') {
-
-                this.requestFrom = msg;
-                let modal = document.querySelector('.call-request');
-                let content = document.querySelector('.chats-content');
-                content.classList.add('cloud');
-                modal.classList.add('incoming');
-                console.log(this.requestFrom)
-
-            } else if (msg.type == 'answer') {
-
-                this.remoteAnswer = msg;
-                let ans = msg.answer;
-                let cdt = msg.candidate;
-                callPeer.setRemoteDescription(ans);
-                callPeer.addIceCandidate(cdt);
-
-                console.log(msg)
-
-            } else if (msg.type == 'rejected') {
-
-                alert('Call request rejected by the user!');
-                for (let track of localStream.getTracks()) {
-                    track.stop()
-                }
-                video.src = null;
-                room.style.display = 'none';
-
-            } else if (msg.type == 'call_aborted') {
-
-                this.requestFrom = {};
-                let modal = document.querySelector('.call-request');
-                let content = document.querySelector('.chats-content');
-                modal.classList.remove('incoming');
-                content.classList.remove('cloud');
-
             }
+        }
+
+        db.ref(`call_bucket/${this.userId}`).on('value', snapshot => {
+            let data = snapshot.val();
+            switch(data.type) {
+                case 'offer':
+                    this.remoteOffer = data;
+                    this.remoteUserName = data.contactName;
+                    const modal = document.querySelector('.call-request');
+                    const content = document.querySelector('.chats-content');
+                    modal.classList.add('incoming');
+                    content.classList.add('cloud');
+                    break;
+                case 'answer':
+                    let remoteSdp = new RTCSessionDescription(JSON.parse(data.sdp));
+                    let remoteCandidate = new RTCIceCandidate(JON.parse(data.candidate));
+                    callPeer.setRemoteDescription(remoteSdp);
+                    callPeer.addIceCandidate(remoteCandidate);
+                    console.log(data)
+                    break;
+                case 'rejected':
+                    video.src = null;
+                    remoteVideo.src = null;
+                    room.style.display = 'none';
+
+                    for (let track of localStream.getTracks()) {
+                        track.stop()
+                    }
+
+                    callPeer.close();
+                    callPeer = null;
+                    self.callWaiting = true;
+                    clearCallHistory(self.user.uid,self.callTo.uid);
+                    break;
+                case 'aborted':
+                    const alertModal = document.querySelector('.call-request');
+                    const msgContent = document.querySelector('.chats-content');
+                    alertModal.classList.remove('incoming');
+                    msgContent.classList.remove('cloud')
+                default:
+                    console.log(data)
+                    break;
+            }
+        })
+
+        function isEngaged(user) {
+            return new Promise((resolve, reject) => {
+                db.ref(`call_bucket/${user}`).once('value')
+                .then(snapshot => {
+                    let data = snapshot.val();
+                    resolve(data.engaged)
+                })
+            })
         }
 
         function gatherCandidates(peer) {
@@ -465,14 +477,41 @@ export default {
             })
         }
 
+        function clearCallHistory(user1,user2,setType='none') {
+            db.ref(`call_bucket/${user1}`).update({
+                "type": setType,
+                "contactName": '',
+                "contactId": '',
+                "sdp": '',
+                "candidate": '',
+                "engaged": false
+            })
+            .then(_ => {
+                db.ref(`call_bucket/${user2}`).update({
+                    "type": setType,
+                    "contactName": '',
+                    "contactId": '',
+                    "sdp": '',
+                    "candidate": '',
+                    "engaged": false
+                })
+            })
+        }
+
         let callBtn = document.querySelector('.vid-call');
-        callBtn.addEventListener('click',() => {
-            room.style.display = 'block';
+        callBtn.addEventListener('click', async () => {
             let uuid = self.userView.uid;
             self.callTo = self.userView;
-            let constraints = { audio: true, video: { width: 1280, height: 720 } };
+            let constraints = { audio: true, video: false };
+            let engaged = await isEngaged(uuid);
+
+            if (engaged) {
+                alert('User already engaged!')
+                return;
+            }
             
             // Start video stream
+            room.style.display = 'block';
             navigator.mediaDevices.getUserMedia(constraints)
             .then(mediaStream => {
                 localStream = mediaStream;
@@ -483,7 +522,7 @@ export default {
                 // Create a peer connection
                 callPeer = new RTCPeerConnection(config);
                 for (let track of localStream.getTracks()) {
-                    callPeer.addTrack(track);
+                    callPeer.addTrack(track, localStream);
                 }
 
                 let callOffer;
@@ -495,17 +534,27 @@ export default {
                 }).then(() => {
                     // Gather ice candidates
                     gatherCandidates(callPeer).then(candidate => {
-                        let msg = {
-                            type: 'call_request',
-                            name: self.user.name,
-                            from: self.user.uid,
-                            to: uuid,
-                            offer: callOffer,
-                            candidate: candidate
+                        const offer = {
+                            sdp: callOffer.sdp,
+                            type: callOffer.type
                         }
-                        // Send offer and candidates to the remote peer 
-                        socket.send(JSON.stringify(msg))
-                        console.log(msg)
+                        // Send offer and candidates to the remote peer
+                        db.ref(`call_bucket/${self.user.uid}`).update({
+                            "engaged": true
+                        })
+                        .then(_ => {
+                            db.ref(`call_bucket/${uuid}`).update({
+                                "type": 'offer',
+                                "contactName": self.user.name,
+                                "contactId": self.user.uid,
+                                "sdp": JSON.stringify(offer),
+                                "candidate": JSON.stringify(candidate),
+                                "engaged": true
+                            })
+                            .then(_ => {
+                                console.log('sent!')
+                            })
+                        })
                     })
                 })
 
@@ -534,13 +583,7 @@ export default {
                         callPeer = null;
                         self.callWaiting = true;
 
-                        let endMsg = {
-                            type: 'call_ended',
-                            to: self.user.uid,
-                            from: self.user.uid
-                        }
-
-                        socket.send(JSON.stringify(endMsg))
+                        clearCallHistory(self.user.uid, uuid, 'aborted')
                     }
                 }
 
@@ -552,15 +595,6 @@ export default {
                     }
                     video.src = null;
                     room.style.display = 'none';
-
-                    if (!self.remoteAnswer) {
-                        let msg = {
-                            type: 'call_aborted',
-                            to: uuid,
-                            from: self.user.uid
-                        }
-                        socket.send(JSON.stringify(msg))
-                    }
 
                     if (callPeer) {
                         callPeer.close()
@@ -574,6 +608,7 @@ export default {
 
                     localStream = null;
                     self.callWaiting = true;
+                    clearCallHistory(self.user.uid, uuid, 'aborted')
                 })
 
             }).catch(err => {
@@ -588,13 +623,9 @@ export default {
             let content = document.querySelector('.chats-content');
             modal.classList.remove('incoming');
             content.classList.remove('cloud');
-
-            let msg = {
-                type: 'rejected',
-                to: self.requestFrom.id,
-                from: self.user.uid
-            }
-            socket.send(JSON.stringify(msg))
+            db.ref(`call_bucket/${self.remoteOffer.contactId}`).update({
+                'type': 'rejected'
+            })
         })
 
         // Accept incoming video call
@@ -606,7 +637,7 @@ export default {
             content.classList.remove('cloud');
 
             room.style.display = 'block';
-            let constraints = { audio: true, video: { width: 1280, height: 720 } };
+            let constraints = { audio: false, video: { width: 1280, height: 720 } };
             // { width: 1280, height: 720 }
 
             navigator.mediaDevices.getUserMedia(constraints)
@@ -622,29 +653,43 @@ export default {
                     answerPeer.addTrack(track)
                 }
 
-                answerPeer.setRemoteDescription(self.requestFrom.offer);
-                answerPeer.addIceCandidate(self.requestFrom.candidate);
+                const desc = self.remoteOffer.sdp;
+                const candt = self.remoteOffer.candidate
+                const callerSdp = new RTCSessionDescription(JSON.parse(desc));
+                const callerCndt = new RTCIceCandidate(JSON.parse(candt));
+                answerPeer.setRemoteDescription(callerSdp);
+                answerPeer.addIceCandidate(callerCndt);
 
-                let answer;
+                let myAnswer;
                 // Create an offer with ice candidates
                 answerPeer.createAnswer().then(ans => {
-                    answer = ans;
+                    myAnswer = ans;
                     // set local description
                     return answerPeer.setLocalDescription(ans)
                 }).then(() => {
                     // Gather ice candidates
                     gatherCandidates(answerPeer).then(candidate => {
-                        let msg = {
-                            type: 'call_answer',
-                            name: self.user.name,
-                            from: self.user.uid,
-                            to: self.requestFrom.id,
-                            answer: answer,
-                            candidate: candidate
+                        const answer = {
+                            sdp: myAnswer.sdp,
+                            type: myAnswer.type
                         }
-                        // Send offer and candidates to the remote peer 
-                        socket.send(JSON.stringify(msg))
-                        console.log(msg)
+                        // Send sdp and candidates to the remote peer
+                        db.ref(`call_bucket/${self.user.uid}`).update({
+                            "engaged": true
+                        })
+                        .then(_ => {
+                            db.ref(`call_bucket/${self.remoteOffer.contactId}`).update({
+                                "type": 'answer',
+                                "contactName": self.user.name,
+                                "contactId": self.user.uid,
+                                "sdp": JSON.stringify(answer),
+                                "candidate": JSON.stringify(candidate),
+                                "engaged": true
+                            })
+                            .then(_ => {
+                                console.log('answer sent!')
+                            })
+                        })
                     })
                 })
 
@@ -672,14 +717,7 @@ export default {
                         answerPeer.close();
                         answerPeer = null;
                         self.callWaiting = true;
-
-                        let endMsg = {
-                            type: 'call_ended',
-                            to: self.user.uid,
-                            from: self.user.uid
-                        }
-
-                        socket.send(JSON.stringify(endMsg))
+                        clearCallHistory(self.user.uid, self.remoteOffer.contactId, 'aborted')
                     }
                 }
 
@@ -704,6 +742,7 @@ export default {
 
                     localStream = null;
                     self.callWaiting = true;
+                    clearCallHistory(self.user.uid, self.remoteOffer.contactId, 'aborted')
                 })
 
             }).catch(err => {

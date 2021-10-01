@@ -120,8 +120,18 @@ export default {
       }
       this.saving = true;
       db.ref(`users/${this.userId}`).set(userInfo).then(() => {
-        this.saving = false;
-        this.$router.push('/chats')
+        db.ref(`call_bucket/${this.userId}`).set({
+          engaged: false,
+          contactId: '',
+          contactName: '',
+          rejected: false,
+          sdp: '',
+          candidate: '',
+          type: 'none'
+        }).then(_ => {
+          this.saving = false;
+          this.$router.push('/chats')
+        })
       }).catch(() => {
         alert('Could not upload user details! Please try again.')
       })
