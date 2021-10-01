@@ -568,6 +568,7 @@ export default {
                             remoteVideo.srcObject = remoteStream;
                         }
                         remoteStream.addTrack(ev.track);
+                        remoteVideo.srcObject = remoteStream;
                     }
                 }
 
@@ -703,6 +704,7 @@ export default {
                             remoteVideo.srcObject = remoteStream;
                         }
                         remoteStream.addTrack(ev.track);
+                        remoteVideo.srcObject = remoteStream;
                     }
                 }
 
