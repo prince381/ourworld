@@ -373,8 +373,8 @@ export default {
                 {
                     "urls": [
                         "stun:stun.l.google.com:19302",
-                        "stun:stun1.l.google.com:19302"
-                        // "stun:stun2.l.google.com:19302"
+                        "stun:stun1.l.google.com:19302",
+                        "stun:stun2.l.google.com:19302"
                     ]
                 }
             ]
@@ -650,7 +650,7 @@ export default {
 
                 answerPeer = new RTCPeerConnection(config);
                 for (let track of localStream.getTracks()) {
-                    answerPeer.addTrack(track)
+                    answerPeer.addTrack(track, localStream)
                 }
 
                 const desc = self.remoteOffer.sdp;
