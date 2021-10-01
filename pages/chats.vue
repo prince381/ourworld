@@ -417,7 +417,7 @@ export default {
                     break;
                 case 'answer':
                     let remoteSdp = new RTCSessionDescription(JSON.parse(data.sdp));
-                    let remoteCandidate = new RTCIceCandidate(JON.parse(data.candidate));
+                    let remoteCandidate = new RTCIceCandidate(JSON.parse(data.candidate));
                     callPeer.setRemoteDescription(remoteSdp);
                     callPeer.addIceCandidate(remoteCandidate);
                     console.log(data)
