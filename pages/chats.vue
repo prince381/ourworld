@@ -502,7 +502,7 @@ export default {
         callBtn.addEventListener('click', async () => {
             let uuid = self.userView.uid;
             self.callTo = self.userView;
-            let constraints = { audio: true, video: false };
+            let constraints = { audio: true, video: { width: 1280, height: 720 } };
             let engaged = await isEngaged(uuid);
 
             if (engaged) {
@@ -637,7 +637,7 @@ export default {
             content.classList.remove('cloud');
 
             room.style.display = 'block';
-            let constraints = { audio: false, video: { width: 1280, height: 720 } };
+            let constraints = { audio: true, video: { width: 1280, height: 720 } };
             // { width: 1280, height: 720 }
 
             navigator.mediaDevices.getUserMedia(constraints)
