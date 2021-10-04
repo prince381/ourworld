@@ -151,7 +151,7 @@
                     </div>
                 </div>
                 <div class="local-stream">
-                    <video id="local-video" autoplay></video>
+                    <video id="local-video" autoplay muted></video>
                 </div>
                 <div class="controls">
                     <div class="mute-audio">
@@ -218,6 +218,7 @@ export default {
             callWaiting: true,
             userId: this.$store.state.auth.user.uid,
             remoteOffer: null,
+            remoteCandidates: [],
             remoteUserName: ''
         }
     },
@@ -306,7 +307,7 @@ export default {
         let socket = new WebSocket('wss://ourworld-signaling-server.herokuapp.com/');
         // let socket = new WebSocket('ws://localhost:9000');
         window.conn = socket;
-        let callPeer, answerPeer, localStream, remoteStream;
+        let callPeer, answerPeer, localStream, remoteCallerStream, remoteAnswerStream;
         const room = document.querySelector('.stream-ground');
         const video = document.getElementById('local-video');
         const remoteVideo = document.getElementById('remote-video');
@@ -376,13 +377,18 @@ export default {
                         "stun:stun1.l.google.com:19302",
                         "stun:stun2.l.google.com:19302"
                     ]
+                },
+                {
+                    "urls": "turn:numb.viagenie.ca",
+                    "credential": "muazkh",
+                    "username": "webrtc@live.com" 
                 }
             ]
         }
 
         db.ref(`users/${this.userId}`).once('value').then(snapshot => {
             let data = snapshot.val();
-            this.user = {uid: this.userId, engaged: false, ...data};
+            this.user = {uid: this.userId, ...data};
             socket.send(JSON.stringify(this.user))
         })
 
@@ -404,8 +410,9 @@ export default {
             }
         }
 
-        db.ref(`call_bucket/${this.userId}`).on('value', snapshot => {
+        db.ref(`call_offer/${this.userId}`).on('value', snapshot => {
             let data = snapshot.val();
+            // console.log(data)
             switch(data.type) {
                 case 'offer':
                     this.remoteOffer = data;
@@ -414,13 +421,6 @@ export default {
                     const content = document.querySelector('.chats-content');
                     modal.classList.add('incoming');
                     content.classList.add('cloud');
-                    break;
-                case 'answer':
-                    let remoteSdp = new RTCSessionDescription(JSON.parse(data.sdp));
-                    let remoteCandidate = new RTCIceCandidate(JSON.parse(data.candidate));
-                    callPeer.setRemoteDescription(remoteSdp);
-                    callPeer.addIceCandidate(remoteCandidate);
-                    console.log(data)
                     break;
                 case 'rejected':
                     video.src = null;
@@ -449,7 +449,7 @@ export default {
 
         function isEngaged(user) {
             return new Promise((resolve, reject) => {
-                db.ref(`call_bucket/${user}`).once('value')
+                db.ref(`users/${user}`).once('value')
                 .then(snapshot => {
                     let data = snapshot.val();
                     resolve(data.engaged)
@@ -457,43 +457,34 @@ export default {
             })
         }
 
-        function gatherCandidates(peer) {
-            return new Promise((resolve, reject) => {
-                let cddt;
-
-                peer.onicecandidate = (e) => {
-                    let candidate = e.candidate;
-                    if (candidate && candidate.candidate) {
-                        cddt = candidate;
-                    }
-                }
-
-                peer.onicegatheringstatechange = (e) => {
-                    let state = peer.iceGatheringState;
-                    if (state == 'complete') {
-                        resolve(cddt)
-                    }
-                }
-            })
-        }
-
         function clearCallHistory(user1,user2,setType='none') {
-            db.ref(`call_bucket/${user1}`).update({
+            db.ref(`call_offer/${user1}`).update({
                 "type": setType,
                 "contactName": '',
                 "contactId": '',
-                "sdp": '',
-                "candidate": '',
-                "engaged": false
-            })
-            .then(_ => {
-                db.ref(`call_bucket/${user2}`).update({
-                    "type": setType,
-                    "contactName": '',
-                    "contactId": '',
-                    "sdp": '',
-                    "candidate": '',
-                    "engaged": false
+                "sdp": ''
+            }).then(_ => {
+                db.ref(`users/${user1}`).update({
+                    'engaged': false
+                }).then(_ => {
+                    db.ref(`call_offer/${user2}`).update({
+                        "type": setType,
+                        "contactName": '',
+                        "contactId": '',
+                        "sdp": ''
+                    }).then(_ => {
+                        db.ref(`users/${user2}`).update({
+                            'engaged': false
+                        }).then(_ => {
+                            db.ref(`ice_candidates/${user1}`).update({
+                                'candidate': ''
+                            }).then(_ => {
+                                db.ref(`ice_candidates/${user2}`).update({
+                                    'candidate': ''
+                                })
+                            })
+                        })
+                    })
                 })
             })
         }
@@ -502,7 +493,8 @@ export default {
         callBtn.addEventListener('click', async () => {
             let uuid = self.userView.uid;
             self.callTo = self.userView;
-            let constraints = { audio: true, video: { width: 1280, height: 720 } };
+            let constraints = { audio: true, video: false };
+            // { width: 1280, height: 720 }
             let engaged = await isEngaged(uuid);
 
             if (engaged) {
@@ -521,56 +513,86 @@ export default {
                 }
                 // Create a peer connection
                 callPeer = new RTCPeerConnection(config);
+
                 for (let track of localStream.getTracks()) {
                     callPeer.addTrack(track, localStream);
                 }
-
-                let callOffer;
-                // Create an offer with ice candidates
-                callPeer.createOffer().then(offer => {
-                    callOffer = offer;
-                    // set local description
-                    return callPeer.setLocalDescription(offer)
-                }).then(() => {
-                    // Gather ice candidates
-                    gatherCandidates(callPeer).then(candidate => {
-                        const offer = {
-                            sdp: callOffer.sdp,
-                            type: callOffer.type
-                        }
-                        // Send offer and candidates to the remote peer
-                        db.ref(`call_bucket/${self.user.uid}`).update({
-                            "engaged": true
-                        })
-                        .then(_ => {
-                            db.ref(`call_bucket/${uuid}`).update({
-                                "type": 'offer',
-                                "contactName": self.user.name,
-                                "contactId": self.user.uid,
-                                "sdp": JSON.stringify(offer),
-                                "candidate": JSON.stringify(candidate),
-                                "engaged": true
-                            })
-                            .then(_ => {
-                                console.log('sent!')
-                            })
-                        })
-                    })
-                })
 
                 callPeer.ontrack = (ev) => {
                     self.callWaiting = false;
                     if (ev.streams && ev.streams[0]) {
                         remoteVideo.srcObject = ev.streams[0];
                     } else {
-                        if (!remoteStream) {
-                            remoteStream = new MediaStream();
-                            remoteVideo.srcObject = remoteStream;
+                        if (!remoteCallerStream) {
+                            remoteCallerStream = new MediaStream();
+                            remoteVideo.srcObject = remoteCallerStream;
                         }
-                        remoteStream.addTrack(ev.track);
-                        remoteVideo.srcObject = remoteStream;
+                        remoteCallerStream.addTrack(ev.track, remoteCallerStream);
+                    }
+                    console.log(ev)
+                }
+
+                // gather and store my iceCandidates
+                let candidates = [];
+                callPeer.onicecandidate = (ev) => {
+                    if (ev.candidate) {
+                        // console.log(ev.candidate)
+                        candidates.push(ev.candidate)
                     }
                 }
+
+                let callOffer;
+                // Create an offer with ice candidates
+                callPeer.createOffer({
+                    offerToReceiveVideo: true,
+                    offerToReceiveAudio: false
+                }).then(offer => {
+                    callOffer = offer;
+                    // set local description
+                    return callPeer.setLocalDescription(offer)
+                }).then(() => {
+                    const offer = {
+                        sdp: callOffer.sdp,
+                        type: callOffer.type
+                    }
+                    // Send offer and candidates to the remote peer
+                    db.ref(`users/${self.user.uid}`).update({
+                        "engaged": true
+                    })
+                    .then(_ => {
+                        db.ref(`call_offer/${uuid}`).update({
+                            "type": 'offer',
+                            "contactName": self.user.name,
+                            "contactId": self.user.uid,
+                            "sdp": JSON.stringify(offer)
+                        })
+                        .then(_ => {
+                            db.ref(`users/${uuid}`).update({
+                                "engaged": true
+                            }).then(_ => {
+                                console.log('sent!')
+                            })
+                        })
+                    })
+                })
+
+                db.ref(`call_offer/${self.user.uid}`).on('value', snapshot => {
+                    const data = snapshot.val();
+                    if (data.type == 'answer'){
+                        const sdp = JSON.parse(data.sdp);
+                        const answer = new RTCSessionDescription(sdp);
+                        callPeer.setRemoteDescription(answer)
+
+                        // console.log('remote description!\n\n', answer)
+                        db.ref(`ice_candidates/${uuid}`).update({
+                            'candidate': JSON.stringify(candidates)
+                        }).then(_ => {
+                            for (let cddt of self.remoteCandidates) {
+                                callPeer.addIceCandidate(cddt)
+                            }
+                        })
+                    }
+                })
 
                 callPeer.onconnectionstatechange = () => {
                     if (callPeer.connectionState == 'closed') {
@@ -582,11 +604,19 @@ export default {
                         room.style.display = 'none';
                         callPeer.close();
                         callPeer = null;
+                        remoteCallerStream = null;
                         self.callWaiting = true;
 
                         clearCallHistory(self.user.uid, uuid, 'aborted')
                     }
                 }
+
+                db.ref(`ice_candidates/${self.user.uid}`).on('value', snapshot => {
+                    const dt = snapshot.val();
+                    if (dt.candidate == '' || dt.candidate == undefined || dt.candidate == null) return;
+                    const iceCandt = new RTCIceCandidate(JSON.parse(dt.candidate));
+                    self.remoteCandidates.push(iceCandt)
+                })
 
                 let endCall = document.querySelector('.stream-end');
                 // End video stream when button is clicked.
@@ -608,6 +638,7 @@ export default {
                     }
 
                     localStream = null;
+                    remoteCallerStream = null;
                     self.callWaiting = true;
                     clearCallHistory(self.user.uid, uuid, 'aborted')
                 })
@@ -624,7 +655,7 @@ export default {
             let content = document.querySelector('.chats-content');
             modal.classList.remove('incoming');
             content.classList.remove('cloud');
-            db.ref(`call_bucket/${self.remoteOffer.contactId}`).update({
+            db.ref(`call_offer/${self.remoteOffer.contactId}`).update({
                 'type': 'rejected'
             })
         })
@@ -638,7 +669,7 @@ export default {
             content.classList.remove('cloud');
 
             room.style.display = 'block';
-            let constraints = { audio: true, video: { width: 1280, height: 720 } };
+            let constraints = { audio: false, video: { width: 1280, height: 720 } };
             // { width: 1280, height: 720 }
 
             navigator.mediaDevices.getUserMedia(constraints)
@@ -652,14 +683,34 @@ export default {
                 answerPeer = new RTCPeerConnection(config);
                 for (let track of localStream.getTracks()) {
                     answerPeer.addTrack(track, localStream)
+                    console.log(track)
+                }
+
+                answerPeer.ontrack = (ev) => {
+                    self.callWaiting = false;
+                    if (ev.streams && ev.streams[0]) {
+                        remoteVideo.srcObject = ev.streams[0];
+                    } else {
+                        if (!remoteAnswerStream) {
+                            remoteAnswerStream = new MediaStream();
+                            remoteVideo.srcObject = remoteAnswerStream;
+                        }
+                        remoteAnswerStream.addTrack(ev.track, remoteAnswerStream);
+                    }
+                    // console.log(ev)
                 }
 
                 const desc = self.remoteOffer.sdp;
-                const candt = self.remoteOffer.candidate
                 const callerSdp = new RTCSessionDescription(JSON.parse(desc));
-                const callerCndt = new RTCIceCandidate(JSON.parse(candt));
                 answerPeer.setRemoteDescription(callerSdp);
-                answerPeer.addIceCandidate(callerCndt);
+
+                answerPeer.onicecandidate = (ev) => {
+                    if (ev.candidate) {
+                        db.ref(`ice_candidates/${self.remoteOffer.contactId}`).update({
+                            'candidate': JSON.stringify(ev.candidate)
+                        })
+                    }
+                }
 
                 let myAnswer;
                 // Create an offer with ice candidates
@@ -668,45 +719,18 @@ export default {
                     // set local description
                     return answerPeer.setLocalDescription(ans)
                 }).then(() => {
-                    // Gather ice candidates
-                    gatherCandidates(answerPeer).then(candidate => {
-                        const answer = {
-                            sdp: myAnswer.sdp,
-                            type: myAnswer.type
-                        }
-                        // Send sdp and candidates to the remote peer
-                        db.ref(`call_bucket/${self.user.uid}`).update({
-                            "engaged": true
-                        })
-                        .then(_ => {
-                            db.ref(`call_bucket/${self.remoteOffer.contactId}`).update({
-                                "type": 'answer',
-                                "contactName": self.user.name,
-                                "contactId": self.user.uid,
-                                "sdp": JSON.stringify(answer),
-                                "candidate": JSON.stringify(candidate),
-                                "engaged": true
-                            })
-                            .then(_ => {
-                                console.log('answer sent!')
-                            })
-                        })
+                    const answer = {
+                        sdp: myAnswer.sdp,
+                        type: myAnswer.type
+                    }
+                    // Send sdp and candidates to the remote peer
+                    db.ref(`call_offer/${self.remoteOffer.contactId}`).update({
+                        "type": 'answer',
+                        "contactName": self.user.name,
+                        "contactId": self.user.uid,
+                        "sdp": JSON.stringify(answer)
                     })
                 })
-
-                answerPeer.ontrack = (ev) => {
-                    self.callWaiting = false;
-                    if (ev.streams && ev.streams[0]) {
-                        remoteVideo.srcObject = ev.streams[0];
-                    } else {
-                        if (!remoteStream) {
-                            remoteStream = new MediaStream();
-                            remoteVideo.srcObject = remoteStream;
-                        }
-                        remoteStream.addTrack(ev.track);
-                        remoteVideo.srcObject = remoteStream;
-                    }
-                }
 
                 answerPeer.onconnectionstatechange = () => {
                     if (answerPeer.connectionState == 'closed') {
@@ -719,9 +743,22 @@ export default {
                         answerPeer.close();
                         answerPeer = null;
                         self.callWaiting = true;
+                        remoteAnswerStream = null;
                         clearCallHistory(self.user.uid, self.remoteOffer.contactId, 'aborted')
                     }
                 }
+
+                db.ref(`ice_candidates/${self.user.uid}`)
+                .on('value', snapshot => {
+                    const dt = snapshot.val();
+                    if (dt.candidate == '' || dt.candidate == undefined || dt.candidate == null) return;
+                    const cddts = JSON.parse(dt.candidate);
+                    for (let cdt of cddts) {
+                        const iceCandt = new RTCIceCandidate(cdt);
+                        answerPeer.addIceCandidate(iceCandt)
+                    }
+                    console.log(cddts)
+                })
 
                 let endCall = document.querySelector('.stream-end');
                 // End video stream when button is clicked.
@@ -743,6 +780,7 @@ export default {
                     }
 
                     localStream = null;
+                    remoteAnswerStream = null;
                     self.callWaiting = true;
                     clearCallHistory(self.user.uid, self.remoteOffer.contactId, 'aborted')
                 })

@@ -116,21 +116,24 @@ export default {
         age: this.age,
         profession: this.job,
         country: this.country,
-        desc: this.description
+        desc: this.description,
+        engaged: false
       }
       this.saving = true;
       db.ref(`users/${this.userId}`).set(userInfo).then(() => {
-        db.ref(`call_bucket/${this.userId}`).set({
-          engaged: false,
+        db.ref(`call_offer/${this.userId}`).set({
           contactId: '',
           contactName: '',
-          rejected: false,
           sdp: '',
-          candidate: '',
           type: 'none'
         }).then(_ => {
-          this.saving = false;
-          this.$router.push('/chats')
+          db.ref(`ice_candidates/${this.userId}`).set({
+            candidate: ''
+          })
+          .then(_ => {
+            this.saving = false;
+            this.$router.push('/chats')
+          })
         })
       }).catch(() => {
         alert('Could not upload user details! Please try again.')
