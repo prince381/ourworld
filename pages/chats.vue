@@ -389,7 +389,11 @@ export default {
         db.ref(`users/${this.userId}`).once('value').then(snapshot => {
             let data = snapshot.val();
             this.user = {uid: this.userId, ...data};
-            socket.send(JSON.stringify(this.user))
+            if (socket.readyState !== 0) {
+                socket.send(JSON.stringify(this.user))
+            } else {
+                window.location.href = window.location.href;
+            }
         })
 
         socket.onmessage = (ev) => {
