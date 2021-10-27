@@ -497,7 +497,7 @@ export default {
         callBtn.addEventListener('click', async () => {
             let uuid = self.userView.uid;
             self.callTo = self.userView;
-            let constraints = { audio: true, video: false };
+            let constraints = { audio: true, video: { width: 1280, height: 720 } };
             // { width: 1280, height: 720 }
             let engaged = await isEngaged(uuid);
 
@@ -549,7 +549,7 @@ export default {
                 // Create an offer with ice candidates
                 callPeer.createOffer({
                     offerToReceiveVideo: true,
-                    offerToReceiveAudio: false
+                    offerToReceiveAudio: true
                 }).then(offer => {
                     callOffer = offer;
                     // set local description
@@ -673,7 +673,7 @@ export default {
             content.classList.remove('cloud');
 
             room.style.display = 'block';
-            let constraints = { audio: false, video: { width: 1280, height: 720 } };
+            let constraints = { audio: true, video: { width: 1280, height: 720 } };
             // { width: 1280, height: 720 }
 
             navigator.mediaDevices.getUserMedia(constraints)
