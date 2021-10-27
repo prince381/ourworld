@@ -643,7 +643,7 @@ input {
 }
 
 .middle-content {
-    /* transform: translateX(100%) rotateY(90deg); */
+    transform: translateX(100%) rotateY(90deg);
     overflow: hidden;
     padding: 1rem;
 }
@@ -941,13 +941,13 @@ input {
     text-align: right;
 }
 
-.sidebar {
+.shift .sidebar {
     transform: translateX(-100%) rotateY(-90deg);
 }
 
-/* .shift .middle-content {
+.shift .middle-content {
     transform: translateX(0) rotateY(0deg);
-} */
+}
 
 .sidebar {
     overflow-y: scroll;
@@ -1497,7 +1497,13 @@ input {
         grid-template-columns: 310px auto;
     }
 
-    .sidebar {
+    .sidebar,
+    .middle-content {
+        transform: translateX(0) rotateY(0deg);
+    }
+
+    .shift .sidebar,
+    .shift .middle-content {
         transform: translateX(0) rotateY(0deg);
     }
 

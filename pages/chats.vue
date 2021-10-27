@@ -88,7 +88,7 @@
                     <div class="type-send">
                         <div class="type-send-wrap">
                             <span class="img-icon">
-                                <i class="fas fa-image"></i>
+                                <i class="fas fa-users"></i>
                             </span>
                             <span class="emoji-icon" @click="toggleEmojis">
                                 <i class="fas fa-smile"></i>
@@ -307,6 +307,14 @@ export default {
         let socket = new WebSocket('wss://ourworld-signaling-server.herokuapp.com/');
         // let socket = new WebSocket('ws://localhost:9000');
         window.conn = socket;
+        const ringtone = new Audio();
+        ringtone.src = '/tone.mp3';
+        ringtone.setAttribute('loop',true)
+
+        // ringtone.addEventListener('ended', () => {
+        //     ringtone.play()
+        // })
+
         let callPeer, answerPeer, localStream, remoteCallerStream, remoteAnswerStream;
         const room = document.querySelector('.stream-ground');
         const video = document.getElementById('local-video');
@@ -344,6 +352,23 @@ export default {
             }
         </style>
         `
+
+        const chatsContent = document.querySelector('.chats-content');
+        const toChats = document.querySelector('.to-chats');
+        const imgIcon = document.querySelector('.img-icon');
+        const usersIcon = document.querySelector('.fa-users');
+
+        toChats.addEventListener('click',() => {
+            chatsContent.classList.add('shift')
+        })
+
+        imgIcon.addEventListener('click',() => {
+            chatsContent.classList.remove('shift')
+        })
+
+        usersIcon.addEventListener('click',() => {
+            chatsContent.classList.remove('shift')
+        })
 
         function hidePlaceholder() {
             let content = messageBox.document.body.textContent;
@@ -419,6 +444,7 @@ export default {
             // console.log(data)
             switch(data.type) {
                 case 'offer':
+                    ringtone.play()
                     this.remoteOffer = data;
                     this.remoteUserName = data.contactName;
                     const modal = document.querySelector('.call-request');
@@ -439,8 +465,11 @@ export default {
                     callPeer = null;
                     self.callWaiting = true;
                     clearCallHistory(self.user.uid,self.callTo.uid);
+                    alert('The person you\' trying to reach has rejected your call')
                     break;
                 case 'aborted':
+                    ringtone.pause()
+                    ringtone.currentTime = 0;
                     const alertModal = document.querySelector('.call-request');
                     const msgContent = document.querySelector('.chats-content');
                     alertModal.classList.remove('incoming');
@@ -655,6 +684,8 @@ export default {
         // Reject incoming video call
         const rejectBtn = document.querySelector('.cancel');
         rejectBtn.addEventListener('click', () => {
+            ringtone.pause()
+            ringtone.currentTime = 0;
             let modal = document.querySelector('.call-request');
             let content = document.querySelector('.chats-content');
             modal.classList.remove('incoming');
@@ -667,6 +698,8 @@ export default {
         // Accept incoming video call
         const acceptCall = document.querySelector('.accept');
         acceptCall.addEventListener('click', (e) => {
+            ringtone.pause()
+            ringtone.currentTime = 0;
             let modal = document.querySelector('.call-request');
             let content = document.querySelector('.chats-content');
             modal.classList.remove('incoming');

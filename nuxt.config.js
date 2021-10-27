@@ -1,5 +1,9 @@
 export default {
   ssr: true,
+  target: 'static',
+  generate: {
+    fallback: true
+  },
   // Global page headers: https://go.nuxtjs.dev/config-head
   head: {
     title: 'OurWorld || The whole world in one room.',
